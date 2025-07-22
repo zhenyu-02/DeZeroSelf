@@ -122,6 +122,10 @@ class Variable:
     def sum(self, axis=None, keepdims=False):
         from dezeroSelf import functions
         return functions.sum(self, axis, keepdims)
+    def dot(self, other):
+        from dezeroSelf import functions
+        return functions.matmul(self, other)
+    
 
 def as_variable(obj):
     if isinstance(obj, Variable):

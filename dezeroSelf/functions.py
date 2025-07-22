@@ -1,3 +1,4 @@
+from turtle import forward
 import numpy as np
 from dezeroSelf.core import Function, as_variable
 from dezeroSelf import utils
@@ -119,3 +120,15 @@ def sum_to(x, shape):
     if x.shape == shape:
         return as_variable(x)
     return SumTo(shape)(x)
+
+class MatMul(Function):
+    def forward(slef, x, W):
+        y = x.dot(W)
+        return y
+    def backward(self, gys):
+        x, W = self.inputs
+        gx = matmul(gys, W.T)
+        gW = matmul(x.T, gys)
+        return gx, gW
+def matmul(x, W):
+    return MatMul()(x, W)
