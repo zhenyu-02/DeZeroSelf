@@ -2,6 +2,8 @@ import weakref
 import numpy as np
 import contextlib
 
+import dezeroSelf
+
 
 class Config:
     enable_backprop = True
@@ -75,7 +77,7 @@ class Variable:
         seen_set = set()
 
         def add_func(f):
-            if f not in seen_set:
+            if f is not None and f not in seen_set:
                 funcs.append(f)
                 seen_set.add(f)
                 funcs.sort(key=lambda x: x.generation)
@@ -85,7 +87,6 @@ class Variable:
         while funcs:
             f = funcs.pop()
             gys = [output().grad for output in f.outputs]  # output is weakref
-            gxs = f.backward(*gys)
             with using_config('enable_backprop', create_graph):
                 gxs = f.backward(*gys)
                 if not isinstance(gxs, tuple):
@@ -104,6 +105,19 @@ class Variable:
                     for y in f.outputs:
                         y().grad = None  # y is weakref
 
+    def reshape(self, *shape):
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            shape = shape[0]
+        from dezeroSelf import functions
+        return functions.reshape(self, shape)
+    
+    def transpose(self):
+        from dezeroSelf import functions
+        return functions.transpose(self)
+    @property
+    def T(self):
+        from dezeroSelf import functions
+        return functions.transpose(self)
 
 def as_variable(obj):
     if isinstance(obj, Variable):
