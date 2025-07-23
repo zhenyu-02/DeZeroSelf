@@ -192,6 +192,18 @@ class Sigmoid(Function):
 def sigmoid(x):
     return Sigmoid()(x)
 
+class ReLU(Function):
+    def forward(self, x):
+        y = np.maximum(x, 0)
+        return y
+    def backward(self, gy):
+        x, = self.inputs
+        gx = (x.data > 0) * gy
+        return gx
+def relu(x):
+    return ReLU()(x)
+
+
 class GetItem(Function):
     def __init__(self, slices):
         self.slices = slices
@@ -282,6 +294,17 @@ class Log(Function):
 def log(x):
     return Log()(x)
 
+
+def dropout(x, dropout_ratio=0.5):
+    # Inverted dropout
+    x = as_variable(x)
+    from dezeroSelf.core import Config
+    if Config.train:
+        mask = np.random.rand(*x.shape) > dropout_ratio
+        scale = np.array(mask).size / np.array(mask).sum()
+        return x * mask * scale
+    else:
+        return x
 
 def accuracy(y, t):
     y, t = as_variable(y), as_variable(t)

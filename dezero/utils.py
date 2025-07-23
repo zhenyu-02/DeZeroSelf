@@ -1,6 +1,7 @@
 import os
 import subprocess
 import urllib.request
+import ssl
 import numpy as np
 from dezero import as_variable
 from dezero import Variable
@@ -336,7 +337,7 @@ cache_dir = os.path.join(os.path.expanduser('~'), '.dezero')
 
 
 def get_file(url, file_name=None):
-    """Download a file from the `url` if it is not in the cache.
+    """Download a file from a given URL.
 
     The file at the `url` is downloaded to the `~/.dezero`.
 
@@ -358,6 +359,9 @@ def get_file(url, file_name=None):
     if os.path.exists(file_path):
         return file_path
 
+    # Disable SSL certificate verification
+    ssl._create_default_https_context = ssl._create_unverified_context
+
     print("Downloading: " + file_name)
     try:
         urllib.request.urlretrieve(url, file_path, show_progress)
@@ -365,6 +369,10 @@ def get_file(url, file_name=None):
         if os.path.exists(file_path):
             os.remove(file_path)
         raise
+    
+    # Restore SSL certificate verification
+    ssl._create_default_https_context = ssl.create_default_context
+
     print(" Done")
 
     return file_path
