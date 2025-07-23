@@ -119,7 +119,7 @@ class Variable:
         from dezeroSelf import functions
         return functions.transpose(self)
 
-    def sum(self, axis=None, keepdims=False):
+    def sum(self, axis=None, keepdims=False, **kwargs):
         from dezeroSelf import functions
         return functions.sum(self, axis, keepdims)
     def dot(self, other):
@@ -302,6 +302,8 @@ def setup_variable():
     Variable.__truediv__ = div
     Variable.__rtruediv__ = rdiv
     Variable.__pow__ = pow
+    from dezeroSelf.functions import get_item
+    Variable.__getitem__ = get_item
 
 
 class Parameter(Variable):
