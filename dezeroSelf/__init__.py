@@ -18,5 +18,8 @@ else:
     from dezeroSelf.core import Parameter
     from dezeroSelf.layers import Layer
     from dezeroSelf.models import Model
+    from dezeroSelf.datasets import Dataset
+    from dezeroSelf.datasets import Spiral
+    from dezeroSelf.dataloaders import DataLoader
 
 setup_variable()
