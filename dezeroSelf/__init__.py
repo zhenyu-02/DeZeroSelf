@@ -15,5 +15,8 @@ else:
     from dezeroSelf.core import as_array
     from dezeroSelf.core import as_variable
     from dezeroSelf.core import setup_variable  
+    from dezeroSelf.core import Parameter
+    from dezeroSelf.layers import Layer
+    from dezeroSelf.models import Model
 
 setup_variable()

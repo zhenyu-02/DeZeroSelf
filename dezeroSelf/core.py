@@ -192,10 +192,9 @@ class Mul(Function):
         return y
 
     def backward(self, gy):
-        # x0, x1 = self.inputs[0].data, self.inputs[1].data
         x0, x1 = self.inputs
-        #  gy is Variable
-        gx0, gx1 = gy * x1, gy * x0
+        gx0 = gy * x1
+        gx1 = gy * x0
         if self.x0_shape != self.x1_shape:
             from dezeroSelf.functions import sum_to
             gx0 = sum_to(gx0, self.x0_shape)
@@ -303,3 +302,8 @@ def setup_variable():
     Variable.__truediv__ = div
     Variable.__rtruediv__ = rdiv
     Variable.__pow__ = pow
+
+
+class Parameter(Variable):
+    pass
+

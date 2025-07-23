@@ -122,13 +122,13 @@ def sum_to(x, shape):
     return SumTo(shape)(x)
 
 class MatMul(Function):
-    def forward(slef, x, W):
+    def forward(self, x, W):
         y = x.dot(W)
         return y
-    def backward(self, gys):
+    def backward(self, gy):
         x, W = self.inputs
-        gx = matmul(gys, W.T)
-        gW = matmul(x.T, gys)
+        gx = matmul(gy, W.T)
+        gW = matmul(x.T, gy)
         return gx, gW
 def matmul(x, W):
     return MatMul()(x, W)
@@ -146,3 +146,34 @@ class MeanSquaredError(Function):
         return gx0, gx1
 def mean_squared_error(x0, x1):
     return MeanSquaredError()(x0, x1)
+
+
+class Linear(Function):
+    def forward(self, x, W, b):
+        y = x.dot(W)
+        if b is not None:
+            y += b
+        return y
+
+    def backward(self, gy):
+        x, W, b = self.inputs
+        gb = None if b.data is None else sum_to(gy, b.shape)
+        gx = matmul(gy, W.T)
+        gW = matmul(x.T, gy)
+        return gx, gW, gb
+
+
+def linear(x, W, b=None):
+    return Linear()(x, W, b)
+
+
+class Sigmoid(Function):
+    def forward(self, x):
+        y = 1 / (1 + np.exp(-x))
+        return y
+    def backward(self, gy):
+        y = self.outputs[0]()
+        gx = gy * (1 - y) * y
+        return gx
+def sigmoid(x):
+    return Sigmoid()(x)
