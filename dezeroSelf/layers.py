@@ -1,6 +1,7 @@
 from dezeroSelf.core import Parameter
 import numpy as np
 from dezeroSelf.functions import linear
+import dezeroSelf.functions as F
 
 class Layer:
     def __init__(self):
@@ -62,4 +63,24 @@ class Linear(Layer):
             self.W.data = self._init_W()
         y = linear(x, self.W, self.b)
         return y
+    
+
+class RNN(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super().__init__()
+        self.x2h = Linear(hidden_size, in_size)
+        self.h2h = Linear(out_size=hidden_size, in_size=hidden_size, nobias=True)
+        self.h = None
+
+    def reset_state(self):
+        self.h = None
+
+    def forward(self, x):
+        if self.h is None:
+            h_new = F.tanh(self.x2h(x))
+        else:
+            h_new = F.tanh(self.x2h(x) + self.h2h(self.h))
+        self.h = h_new
+        return h_new
+
     

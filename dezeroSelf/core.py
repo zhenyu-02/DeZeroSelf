@@ -129,6 +129,19 @@ class Variable:
         from dezeroSelf import functions
         return functions.matmul(self, other)
     
+    def unchain(self):
+        self.creator = None
+    
+    def unchain_backward(self):
+        if self.creator is None:
+            return
+        funcs = [self.creator]
+        while funcs:
+            f = funcs.pop()
+            for x in f.inputs:
+                if x.creator is not None:
+                    funcs.append(x.creator)
+                    x.unchain()
 
 def as_variable(obj):
     if isinstance(obj, Variable):
