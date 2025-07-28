@@ -83,4 +83,53 @@ class RNN(Layer):
         self.h = h_new
         return h_new
 
-    
+
+class LSTM(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super().__init__()
+
+        H, I = hidden_size, in_size
+        self.x2f = Linear(in_size=I, out_size=H)
+        self.x2i = Linear(in_size=I, out_size=H)
+        self.x2o = Linear(in_size=I, out_size=H)
+        self.x2g = Linear(in_size=I, out_size=H)
+
+        self.h2f = Linear(in_size=H, out_size=H, nobias=True)
+        self.h2i = Linear(in_size=H, out_size=H, nobias=True)
+        self.h2o = Linear(in_size=H, out_size=H, nobias=True)
+        self.h2g = Linear(in_size=H, out_size=H, nobias=True)
+
+        self.reset_state()
+
+    def reset_state(self):
+        self.h = None
+        self.c = None
+
+    def forward(self, x):
+        h, c = self.h, self.c
+
+        if h is not None:
+            if h.shape[0] != x.shape[0]:
+                h = h[:x.shape[0]]
+                c = c[:x.shape[0]]
+
+        if h is None:
+            f = F.sigmoid(self.x2f(x))
+            i = F.sigmoid(self.x2i(x))
+            o = F.sigmoid(self.x2o(x))
+            g = F.tanh(self.x2g(x))
+        else:
+            f = F.sigmoid(self.x2f(x) + self.h2f(h))
+            i = F.sigmoid(self.x2i(x) + self.h2i(h))
+            o = F.sigmoid(self.x2o(x) + self.h2o(h))
+            g = F.tanh(self.x2g(x) + self.h2g(h))
+
+        if c is None:
+            c_new = i * g
+        else:
+            c_new = f * c + i * g
+
+        h_new = o * F.tanh(c_new)
+        self.c = c_new
+        self.h = h_new
+        return h_new

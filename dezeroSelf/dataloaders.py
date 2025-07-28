@@ -1,3 +1,4 @@
+from doctest import Example
 import math
 import random 
 import numpy as np
@@ -38,4 +39,22 @@ class DataLoader:
     
     def next(self):
         return self.__next__()
-    
+
+class SeqDataLoader(DataLoader):
+    def __init__(self, dataset, batch_size):
+        super().__init__(dataset, batch_size, shuffle = False)
+
+    def __next__(self):
+        if self.iteration >= self.max_iter:
+            self.reset()
+            raise StopIteration
+        
+        jump = self.data_size // self.batch_size
+        batch_index = [(i*jump + self.iteration) % self.data_size for i in range(self.batch_size)]
+        batch = [self.dataset[i] for i in batch_index]
+
+        x = np.array([example[0] for example in batch])
+        t = np.array([example[1] for example in batch])
+
+        self.iteration += 1
+        return x, t
