@@ -133,3 +133,62 @@ class LSTM(Layer):
         self.c = c_new
         self.h = h_new
         return h_new
+
+
+class LayerNorm(Layer):
+    def __init__(self, normalized_shape, eps=1e-5):
+        super().__init__()
+        
+        # normalized_shape can be an integer or tuple
+        if isinstance(normalized_shape, int):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = normalized_shape
+        self.eps = eps
+        
+        # Initialize learnable parameters
+        self.gamma = Parameter(np.ones(normalized_shape, dtype=np.float32), name='gamma')
+        self.beta = Parameter(np.zeros(normalized_shape, dtype=np.float32), name='beta')
+    
+    def forward(self, x):
+        return F.layer_norm(x, self.gamma, self.beta, self.eps)
+
+
+class BatchNorm(Layer):
+    def __init__(self, num_features, eps=1e-5, momentum=0.9):
+        super().__init__()
+        
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        
+        # Learnable parameters
+        self.gamma = Parameter(np.ones(num_features, dtype=np.float32), name='gamma')
+        self.beta = Parameter(np.zeros(num_features, dtype=np.float32), name='beta')
+        
+        # Running average parameters (no gradients needed)
+        self.running_mean = np.zeros(num_features, dtype=np.float32)
+        self.running_var = np.ones(num_features, dtype=np.float32)
+    
+    def forward(self, x):
+        from dezeroSelf.core import Config, Variable
+        
+        if Config.train:
+            # Training mode: compute current batch statistics
+            batch_mean = np.mean(x.data, axis=0, keepdims=False)
+            batch_var = np.var(x.data, axis=0, keepdims=False)
+            
+            # Update running averages
+            self.running_mean = self.momentum * self.running_mean + (1 - self.momentum) * batch_mean
+            self.running_var = self.momentum * self.running_var + (1 - self.momentum) * batch_var
+            
+            # Use current batch statistics
+            mean = Variable(batch_mean)
+            var = Variable(batch_var)
+        else:
+            # Test mode: use running averages
+            mean = Variable(self.running_mean)
+            var = Variable(self.running_var)
+            
+        return F.batch_norm(x, self.gamma, self.beta, mean, var, self.eps)
+
+

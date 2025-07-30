@@ -314,3 +314,70 @@ def accuracy(y, t):
     acc = result.mean()
     from dezeroSelf.core import Variable, as_array
     return Variable(as_array(acc))
+
+class LayerNorm(Function):
+    def __init__(self, eps=1e-5):
+        self.eps = eps
+    
+    def forward(self, x, gamma, beta):
+        N, D = x.shape
+        # Calculate mean and variance
+        self.mean = x.mean(axis=1, keepdims=True)
+        self.var = x.var(axis=1, keepdims=True)
+        
+        # Normalize
+        self.x_normalized = (x - self.mean) / np.sqrt(self.var + self.eps)
+        
+        # Scale and shift
+        y = gamma * self.x_normalized + beta
+        return y
+    
+    def backward(self, gy):
+        x, gamma, beta = self.inputs
+        N, D = x.shape
+        
+        # Gradients for gamma and beta (ensure shape matching)
+        dgamma = sum(gy * self.x_normalized, axis=0, keepdims=False)
+        dbeta = sum(gy, axis=0, keepdims=False)
+        
+        # Gradient for x
+        dx_normalized = gy * gamma
+        dvar = sum(dx_normalized * (x.data - self.mean) * (-0.5) * (self.var + self.eps) ** (-1.5), axis=1, keepdims=True)
+        dmean = sum(dx_normalized * (-1.0 / np.sqrt(self.var + self.eps)), axis=1, keepdims=True) + \
+                dvar * sum(-2.0 * (x.data - self.mean), axis=1, keepdims=True) / D
+        
+        dx = dx_normalized / np.sqrt(self.var + self.eps) + \
+             dvar * 2.0 * (x.data - self.mean) / D + \
+             dmean / D
+        
+        return as_variable(dx), dgamma, dbeta
+
+def layer_norm(x, gamma, beta, eps=1e-5):
+    return LayerNorm(eps)(x, gamma, beta)
+
+class BatchNorm(Function):
+    def __init__(self, eps=1e-5):
+        self.eps = eps
+    
+    def forward(self, x, gamma, beta, mean, var):
+        # Normalize using provided mean and variance
+        self.x_normalized = (x - mean) / np.sqrt(var + self.eps)
+        # Scale and shift
+        y = gamma * self.x_normalized + beta
+        return y
+    
+    def backward(self, gy):
+        x, gamma, beta, mean, var = self.inputs
+        N = x.shape[0]
+        
+        # Gradients for gamma and beta (ensure shape matching)
+        dgamma = sum(gy * self.x_normalized, axis=0, keepdims=False)
+        dbeta = sum(gy, axis=0, keepdims=False)
+        
+        # Gradient for x (simplified version, assuming mean and variance are constants)
+        dx = gy * gamma / np.sqrt(var.data + self.eps)
+        
+        return as_variable(dx), dgamma, dbeta, None, None
+
+def batch_norm(x, gamma, beta, mean, var, eps=1e-5):
+    return BatchNorm(eps)(x, gamma, beta, mean, var)
