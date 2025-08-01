@@ -152,6 +152,8 @@ def as_variable(obj):
 def as_array(x):
     if np.isscalar(x):
         return np.array(x)
+    if isinstance(x, Variable):
+        return x.data
     return x
 
 
@@ -272,8 +274,8 @@ class Div(Function):
         gx1 = gy * (-x0 / x1 ** 2)
         if self.x0_shape != self.x1_shape:
             from dezeroSelf.functions import sum_to
-            gx0 = sum_to(gx0, self.gx0_shape)
-            gx1 = sum_to(gx1, self.gx1_shape)
+            gx0 = sum_to(gx0, self.x0_shape)
+            gx1 = sum_to(gx1, self.x1_shape)
         return gx0, gx1
 
 

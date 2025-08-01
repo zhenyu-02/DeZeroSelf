@@ -75,15 +75,42 @@ def reshape(x, shape):
     return Reshape(shape)(x)
     
 class Transpose(Function):
+    def __init__(self, axes=None):
+        self.axes = axes
+        
     def forward(self, x):
-        y = np.transpose(x)
+        if self.axes is None:
+            y = np.transpose(x)
+        else:
+            y = np.transpose(x, self.axes)
         return y
     
     def backward(self, gy):
-        gx = transpose(gy)
+        if self.axes is None:
+            gx = transpose(gy)
+        else:
+            # 反向axes
+            inv_axes = np.argsort(self.axes)
+            gx = transpose(gy, inv_axes)
         return gx
-def transpose(x):
-    return Transpose()(x)
+
+def transpose(x, axes=None):
+    return Transpose(axes)(x)
+
+class BatchMatMul(Function):
+    def forward(self, x, y):
+        # 批量矩阵乘法: (batch_size, m, k) @ (batch_size, k, n) -> (batch_size, m, n)
+        z = np.matmul(x, y)
+        return z
+    
+    def backward(self, gz):
+        x, y = self.inputs
+        gx = batch_matmul(gz, transpose(y, (0, 2, 1)))
+        gy = batch_matmul(transpose(x, (0, 2, 1)), gz)
+        return gx, gy
+
+def batch_matmul(x, y):
+    return BatchMatMul()(x, y)
 
 class Sum(Function):
     def __init__(self, axis, keepdims):
@@ -164,7 +191,17 @@ def mean_squared_error(x0, x1):
 
 class Linear(Function):
     def forward(self, x, W, b):
-        y = x.dot(W)
+        # Handle batch input: if x is 3D tensor (batch_size, seq_len, input_dim)
+        if len(x.shape) == 3:
+            batch_size, seq_len, input_dim = x.shape
+            # Reshape to 2D for matrix multiplication
+            x_reshaped = x.reshape(-1, input_dim)  # (batch_size * seq_len, input_dim)
+            y = x_reshaped.dot(W)  # (batch_size * seq_len, output_dim)
+            # Reshape back to 3D
+            y = y.reshape(batch_size, seq_len, -1)  # (batch_size, seq_len, output_dim)
+        else:
+            y = x.dot(W)
+        
         if b is not None:
             y += b
         return y
@@ -172,8 +209,25 @@ class Linear(Function):
     def backward(self, gy):
         x, W, b = self.inputs
         gb = None if b.data is None else sum_to(gy, b.shape)
-        gx = matmul(gy, W.T)
-        gW = matmul(x.T, gy)
+        
+        # Handle gradient computation for 3D tensors
+        if len(x.shape) == 3:
+            batch_size, seq_len, input_dim = x.shape
+            output_dim = W.shape[1]
+            
+            # Reshape gradients
+            gy_reshaped = gy.reshape(-1, output_dim)  # (batch_size * seq_len, output_dim)
+            x_reshaped = x.reshape(-1, input_dim)     # (batch_size * seq_len, input_dim)
+            
+            # Compute gradients
+            gx_reshaped = matmul(gy_reshaped, transpose(W))  # (batch_size * seq_len, input_dim)
+            gx = gx_reshaped.reshape(batch_size, seq_len, input_dim)  # Restore 3D shape
+            
+            gW = matmul(transpose(x_reshaped), gy_reshaped)  # (input_dim, output_dim)
+        else:
+            gx = matmul(gy, transpose(W))
+            gW = matmul(transpose(x), gy)
+        
         return gx, gW, gb
 
 
@@ -240,9 +294,14 @@ class Softmax(Function):
         self.axis = axis
 
     def forward(self, x):
-        y = np.exp(x)
+        # Numerically stable softmax: subtract max value to prevent overflow
+        x_max = np.max(x, axis=self.axis, keepdims=True)
+        x_shifted = x - x_max
+        # Clip extreme values to prevent overflow
+        x_shifted = np.clip(x_shifted, -50, 50)
+        y = np.exp(x_shifted)
         sum_y = np.sum(y, axis=self.axis, keepdims=True)
-        return y / sum_y
+        return y / (sum_y + 1e-8)  # Add small value to prevent division by zero
     
     def backward(self, gy):
         y = self.outputs[0]()
@@ -320,35 +379,73 @@ class LayerNorm(Function):
         self.eps = eps
     
     def forward(self, x, gamma, beta):
-        N, D = x.shape
-        # Calculate mean and variance
-        self.mean = x.mean(axis=1, keepdims=True)
-        self.var = x.var(axis=1, keepdims=True)
-        
-        # Normalize
-        self.x_normalized = (x - self.mean) / np.sqrt(self.var + self.eps)
-        
-        # Scale and shift
-        y = gamma * self.x_normalized + beta
+        # Support 2D and 3D inputs
+        if len(x.shape) == 2:
+            N, D = x.shape
+            # Calculate mean and variance
+            self.mean = x.mean(axis=1, keepdims=True)
+            self.var = x.var(axis=1, keepdims=True)
+            
+            # Normalize
+            self.x_normalized = (x - self.mean) / np.sqrt(self.var + self.eps)
+            
+            # Scale and shift
+            y = gamma * self.x_normalized + beta
+            
+        elif len(x.shape) == 3:
+            batch_size, seq_len, D = x.shape
+            # Normalize over the last dimension
+            self.mean = x.mean(axis=-1, keepdims=True)  # (batch_size, seq_len, 1)
+            self.var = x.var(axis=-1, keepdims=True)    # (batch_size, seq_len, 1)
+            
+            # Normalize
+            self.x_normalized = (x - self.mean) / np.sqrt(self.var + self.eps)
+            
+            # Scale and shift (gamma and beta should have shape (D,))
+            y = gamma * self.x_normalized + beta
+        else:
+            raise ValueError(f"LayerNorm does not support {len(x.shape)}D input")
+            
         return y
     
     def backward(self, gy):
         x, gamma, beta = self.inputs
-        N, D = x.shape
         
-        # Gradients for gamma and beta (ensure shape matching)
-        dgamma = sum(gy * self.x_normalized, axis=0, keepdims=False)
-        dbeta = sum(gy, axis=0, keepdims=False)
-        
-        # Gradient for x
-        dx_normalized = gy * gamma
-        dvar = sum(dx_normalized * (x.data - self.mean) * (-0.5) * (self.var + self.eps) ** (-1.5), axis=1, keepdims=True)
-        dmean = sum(dx_normalized * (-1.0 / np.sqrt(self.var + self.eps)), axis=1, keepdims=True) + \
-                dvar * sum(-2.0 * (x.data - self.mean), axis=1, keepdims=True) / D
-        
-        dx = dx_normalized / np.sqrt(self.var + self.eps) + \
-             dvar * 2.0 * (x.data - self.mean) / D + \
-             dmean / D
+        if len(x.shape) == 2:
+            N, D = x.shape
+            
+            # Gradients for gamma and beta (ensure shape matching)
+            dgamma = sum(gy * self.x_normalized, axis=0, keepdims=False)
+            dbeta = sum(gy, axis=0, keepdims=False)
+            
+            # Gradient for x
+            dx_normalized = gy * gamma
+            dvar = sum(dx_normalized * (x.data - self.mean) * (-0.5) * (self.var + self.eps) ** (-1.5), axis=1, keepdims=True)
+            dmean = sum(dx_normalized * (-1.0 / np.sqrt(self.var + self.eps)), axis=1, keepdims=True) + \
+                    dvar * sum(-2.0 * (x.data - self.mean), axis=1, keepdims=True) / D
+            
+            dx = dx_normalized / np.sqrt(self.var + self.eps) + \
+                 dvar * 2.0 * (x.data - self.mean) / D + \
+                 dmean / D
+                 
+        elif len(x.shape) == 3:
+            batch_size, seq_len, D = x.shape
+            
+            # Gradients for gamma and beta (sum along batch and seq dimensions)
+            dgamma = sum(sum(gy * self.x_normalized, axis=0), axis=0, keepdims=False)  # (D,)
+            dbeta = sum(sum(gy, axis=0), axis=0, keepdims=False)  # (D,)
+            
+            # Gradient for x
+            dx_normalized = gy * gamma
+            dvar = sum(dx_normalized * (x.data - self.mean) * (-0.5) * (self.var + self.eps) ** (-1.5), axis=-1, keepdims=True)
+            dmean = sum(dx_normalized * (-1.0 / np.sqrt(self.var + self.eps)), axis=-1, keepdims=True) + \
+                    dvar * sum(-2.0 * (x.data - self.mean), axis=-1, keepdims=True) / D
+            
+            dx = dx_normalized / np.sqrt(self.var + self.eps) + \
+                 dvar * 2.0 * (x.data - self.mean) / D + \
+                 dmean / D
+        else:
+            raise ValueError(f"LayerNorm does not support {len(x.shape)}D input backward propagation")
         
         return as_variable(dx), dgamma, dbeta
 
@@ -381,3 +478,144 @@ class BatchNorm(Function):
 
 def batch_norm(x, gamma, beta, mean, var, eps=1e-5):
     return BatchNorm(eps)(x, gamma, beta, mean, var)
+
+# ===================== Attention Mechanism Related Functions =====================
+
+def scaled_dot_product_attention(query, key, value, mask=None):
+    """
+    Compute scaled dot product attention
+    Args:
+        query: (batch_size, seq_len, d_k)
+        key: (batch_size, seq_len, d_k) 
+        value: (batch_size, seq_len, d_v)
+        mask: Optional mask to prevent attention to padding positions
+    Returns:
+        output: (batch_size, seq_len, d_v)
+        attention_weights: (batch_size, seq_len, seq_len)
+    """
+    query, key, value = as_variable(query), as_variable(key), as_variable(value)
+    
+    d_k = query.shape[-1]
+    
+    # Numerical stability improvement: use more conservative scaling factor
+    scale_factor = np.sqrt(max(d_k, 1.0))
+    
+    # Compute attention scores: Q * K^T / sqrt(d_k)
+    # Need to transpose last two dimensions of key: (batch_size, seq_len, d_k) -> (batch_size, d_k, seq_len)
+    key_transposed = transpose(key, (0, 2, 1)) if len(key.shape) == 3 else transpose(key)
+    scores = batch_matmul(query, key_transposed) / scale_factor
+    
+    # Clip scores to prevent extreme values
+    scores_data = scores.data if hasattr(scores, 'data') else scores
+    scores_data = np.clip(scores_data, -10, 10)
+    scores = as_variable(scores_data)
+    
+    # Apply mask (if provided)
+    if mask is not None:
+        mask = as_variable(mask)
+        # Set masked positions to smaller negative numbers (not too extreme)
+        scores = scores + (mask * -1e4)
+    
+    # Apply softmax to get attention weights
+    attention_weights = softmax(scores, axis=-1)
+    
+    # Compute weighted output
+    output = batch_matmul(attention_weights, value)
+    
+    return output, attention_weights
+
+def positional_encoding(seq_len, d_model, max_len=10000):
+    """
+    Generate positional encoding
+    Args:
+        seq_len: Sequence length
+        d_model: Model dimension
+        max_len: Maximum sequence length
+    Returns:
+        Positional encoding matrix (seq_len, d_model)
+    """
+    pos = np.arange(seq_len).reshape(-1, 1).astype(np.float32)
+    
+    # More stable div_term computation
+    i = np.arange(0, d_model, 2).astype(np.float32)
+    div_term = np.exp(-i * np.log(max_len) / d_model)
+    
+    pe = np.zeros((seq_len, d_model), dtype=np.float32)
+    
+    # Compute sin and cos, ensuring proper handling when d_model is even
+    sin_indices = np.arange(0, d_model, 2)
+    cos_indices = np.arange(1, d_model, 2)
+    
+    if len(sin_indices) > 0:
+        pe[:, sin_indices] = np.sin(pos * div_term[:len(sin_indices)])
+    if len(cos_indices) > 0:
+        pe[:, cos_indices] = np.cos(pos * div_term[:len(cos_indices)])
+    
+    # Scale positional encoding to prevent it from being too large
+    pe = pe * 0.1
+    
+    from dezeroSelf.core import Variable
+    return Variable(pe)
+
+class MultiHeadAttentionFunction(Function):
+    """Core computation function for multi-head attention"""
+    def __init__(self, num_heads):
+        self.num_heads = num_heads
+    
+    def forward(self, query, key, value, w_q, w_k, w_v, w_o, mask=None):
+        batch_size, seq_len, d_model = query.shape
+        d_k = d_model // self.num_heads
+        
+        # Linear transformations to get Q, K, V
+        Q = matmul(query, w_q)  # (batch_size, seq_len, d_model)
+        K = matmul(key, w_k)    # (batch_size, seq_len, d_model)
+        V = matmul(value, w_v)  # (batch_size, seq_len, d_model)
+        
+        # Reshape for multi-head form
+        Q = Q.reshape(batch_size, seq_len, self.num_heads, d_k).transpose(0, 2, 1, 3)
+        K = K.reshape(batch_size, seq_len, self.num_heads, d_k).transpose(0, 2, 1, 3)
+        V = V.reshape(batch_size, seq_len, self.num_heads, d_k).transpose(0, 2, 1, 3)
+        
+        # Apply scaled dot product attention to each head
+        attention_output = []
+        for i in range(self.num_heads):
+            q_i = Q[:, i, :, :]  # (batch_size, seq_len, d_k)
+            k_i = K[:, i, :, :]  # (batch_size, seq_len, d_k)
+            v_i = V[:, i, :, :]  # (batch_size, seq_len, d_k)
+            
+            output_i, _ = scaled_dot_product_attention(q_i, k_i, v_i, mask)
+            attention_output.append(output_i)
+        
+        # Concatenate outputs from all heads
+        concat_output = concatenate(attention_output, axis=-1)
+        
+        # Final linear transformation
+        final_output = matmul(concat_output, w_o)
+        
+        return final_output
+
+class Concatenate(Function):
+    def __init__(self, axis):
+        self.axis = axis
+    
+    def forward(self, *inputs):
+        self.input_shapes = [x.shape for x in inputs]
+        y = np.concatenate(inputs, axis=self.axis)
+        return y
+    
+    def backward(self, gy):
+        # Split gradients according to original shapes
+        split_indices = []
+        cumsum = 0
+        for shape in self.input_shapes[:-1]:
+            cumsum += shape[self.axis]
+            split_indices.append(cumsum)
+        
+        # Extract data from Variable, perform split, then wrap back to Variable
+        gy_data = gy.data if hasattr(gy, 'data') else gy
+        grad_arrays = np.split(gy_data, split_indices, axis=self.axis)
+        grads = tuple(as_variable(grad) for grad in grad_arrays)
+        return grads
+
+def concatenate(inputs, axis):
+    return Concatenate(axis)(*inputs)
